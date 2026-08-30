@@ -547,6 +547,7 @@ https://discordapp.com/api/webhooks/{WebhookID}/{WebhookToken}
           "no" => "Norwegian",
           "pl" => "Polish",
           "pt" => "Portuguese",
+          "pt-BR" => "Portuguese (Brazil)",
           "ro" => "Romanian",
           "ru" => "Russian",
           "sr" => "Serbian",
