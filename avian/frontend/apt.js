@@ -3600,7 +3600,7 @@
   };
 
   function wikiUrl(sci) {
-    return 'https://en.wikipedia.org/wiki/' + encodeURIComponent(sci.replace(/ /g, '_'));
+    return 'https://pt.wikipedia.org/wiki/' + encodeURIComponent(sci.replace(/ /g, '_'));
   }
   function ebirdUrl(sci) {
     var code = EBIRD_CODES[sci];
@@ -8109,7 +8109,7 @@
       if (contentRequest !== POSTCARD_CONTENT_REQUEST) return;
       var desc = document.getElementById('modalDesc');
       renderAboutDescription(desc, j);
-      if (j.source && /^https:\/\/en\.wikipedia\.org\/wiki\//.test(j.source.url || '')) {
+      if (j.source && /^https:\/\/(?:en|pt)\.wikipedia\.org\/wiki\//.test(j.source.url || '')) {
         document.getElementById('modalWiki').href = j.source.url;
       }
     }).catch(function () {

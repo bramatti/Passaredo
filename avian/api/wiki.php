@@ -15,6 +15,15 @@
 // Cached at the browser + Caddy edge for 24 h because species descriptions
 // don't materially change during a visit.
 //
+// Language: tries the Wikipedia edition matching DATABASE_LANG first (only
+// "pt" is wired up today, since that's what AvianVisitors ships translated
+// labels for) and falls back to English whenever the species has no article,
+// or no usable lead, in that language. The field-guide sentence heuristics
+// below (distinctiveFieldMarks, the Description/Identification/Appearance
+// section fallback) key off English vocabulary and headings, so they only
+// run for the English lead; a Portuguese lead is shown as-is without those
+// extra passes rather than risk them silently matching nothing.
+//
 // Pinned to wikimedia.org / wikipedia.org for the photo URL to block
 // SSRF if Wikipedia ever returns a poisoned redirect target.
 
@@ -35,6 +44,86 @@ const FIELD_GUIDE_BODY_LINE_MEASURE = 50;
 const FIELD_GUIDE_MARK_LINE_MEASURE = 54;
 const FIELD_GUIDE_MAX_ESTIMATED_LINES = 17;
 const FIELD_GUIDE_MAX_MAIN_CHARS = 575;
+
+/**
+ * Which Wikipedia edition to try first, based on birdnet.conf's
+ * DATABASE_LANG. Only "pt" is recognised today (covers pt and pt-BR); any
+ * other value tries English directly, since AvianVisitors doesn't ship
+ * field-guide heuristics tuned for other languages yet.
+ */
+function preferredWikiLang(): string
+{
+    static $lang = null;
+    if ($lang !== null) {
+        return $lang;
+    }
+    // birdnet.conf isn't strictly INI-valid (some comment lines contain
+    // parentheses), so parse_ini_file can fail on the whole file. Read the
+    // DATABASE_LANG value directly instead, the same way scripts/config.php
+    // already does when it writes this file.
+    $birdnetpiDir = dirname(__DIR__, 2);
+    $raw = @file_get_contents("$birdnetpiDir/birdnet.conf");
+    $dbLang = '';
+    if ($raw !== false && preg_match('/^DATABASE_LANG=(.*)$/m', $raw, $m)) {
+        $dbLang = trim($m[1]);
+    }
+    $lang = (stripos($dbLang, 'pt') === 0) ? 'pt' : 'en';
+    return $lang;
+}
+
+function wikiDomain(string $lang): string
+{
+    return $lang . '.wikipedia.org';
+}
+
+/**
+ * Fetch a page's intro extract + thumbnail from one Wikipedia edition.
+ * Returns null when the request fails, the title has no article, or the
+ * article has no usable extract -- callers use that to decide whether to
+ * fall back to another language edition.
+ *
+ * @return array{title: string, extract: string, thumbnail: ?string}|null
+ */
+function fetchWikiLead(string $domain, string $title, $ctx): ?array
+{
+    $url = "https://$domain/w/api.php?" . http_build_query([
+        'action'        => 'query',
+        'format'        => 'json',
+        'formatversion' => '2',
+        'redirects'     => '1',
+        'prop'          => 'extracts|pageimages',
+        'exintro'       => '1',
+        'explaintext'   => '1',
+        'piprop'        => 'thumbnail',
+        'pithumbsize'   => '640',
+        'titles'        => $title,
+    ], '', '&', PHP_QUERY_RFC3986);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false) {
+        return null;
+    }
+    $json = json_decode($raw, true);
+    if (!is_array($json)) {
+        return null;
+    }
+    $page = $json['query']['pages'][0] ?? null;
+    if (!is_array($page) || !empty($page['missing'])) {
+        return null;
+    }
+    $extract = isset($page['extract']) && is_string($page['extract']) ? $page['extract'] : '';
+    if (trim($extract) === '') {
+        return null;
+    }
+    $pageTitle = isset($page['title']) && is_string($page['title']) ? $page['title'] : $title;
+    $thumb = $page['thumbnail']['source'] ?? null;
+    if ($thumb) {
+        $host = parse_url((string)$thumb, PHP_URL_HOST) ?: '';
+        if (!preg_match('/(?:^|\.)(?:wikimedia\.org|wikipedia\.org)$/i', $host)) {
+            $thumb = null;
+        }
+    }
+    return ['title' => $pageTitle, 'extract' => $extract, 'thumbnail' => $thumb];
+}
 
 function cleanWikiLead(string $value): string
 {
@@ -59,7 +148,7 @@ function wikiLeadSentences(string $value): array
     // breaking common lead prose at abbreviations such as "U.S. as" or
     // "spp. coronata" without pretending to be a linguistic sentence parser.
     $parts = preg_split(
-        '/(?:(?<=[.!?])|(?<=[.!?]["”’\')\]]))\s+(?=["“‘\'(]?[A-Z0-9])/u',
+        '/(?:(?<=[.!?])|(?<=[.!?]["\x{201D}\x{2019}\')\]]))\s+(?=["\x{201C}\x{2018}\'(]?[A-Z0-9])/u',
         $flat,
         -1,
         PREG_SPLIT_NO_EMPTY
@@ -76,10 +165,10 @@ function isCompleteWikiSentence(string $value): bool
 {
     // TextExtracts appends three dots when `exchars` stops inside a sentence.
     // That final fragment is transport truncation, not article prose.
-    if (preg_match('/(?:\.{3}|…)\s*["”’\')\]]*$/u', $value)) {
+    if (preg_match('/(?:\.{3}|\x{2026})\s*["\x{201D}\x{2019}\')\]]*$/u', $value)) {
         return false;
     }
-    return (bool)preg_match('/[.!?]\s*["”’\')\]]*$/u', $value);
+    return (bool)preg_match('/[.!?]\s*["\x{201D}\x{2019}\')\]]*$/u', $value);
 }
 
 function wikiSupplement(string $expanded, string $lead): string
@@ -104,7 +193,7 @@ function wikiSupplement(string $expanded, string $lead): string
         if ($line === '') {
             continue;
         }
-        if (textLength($line) <= 80 && !preg_match('/[.!?]["”’\')\]]*$/u', $line)) {
+        if (textLength($line) <= 80 && !preg_match('/[.!?]["\x{201D}\x{2019}\')\]]*$/u', $line)) {
             continue;
         }
         $body[] = $line;
@@ -123,10 +212,13 @@ function wikiSupplement(string $expanded, string $lead): string
  * Most leads already include field marks. This fallback is intentionally
  * narrow so articles such as House Finch can still supply sourced appearance
  * prose without downloading or heuristically scraping an entire article.
+ *
+ * English-only headings: only called for an English-language lead (see the
+ * call site below), so $domain here is always "en.wikipedia.org" in practice.
  */
-function wikiDescriptionSection(string $title, $ctx): string
+function wikiDescriptionSection(string $domain, string $title, $ctx): string
 {
-    $sectionsUrl = 'https://en.wikipedia.org/w/api.php?' . http_build_query([
+    $sectionsUrl = "https://$domain/w/api.php?" . http_build_query([
         'action'        => 'parse',
         'format'        => 'json',
         'formatversion' => '2',
@@ -158,7 +250,7 @@ function wikiDescriptionSection(string $title, $ctx): string
         return '';
     }
 
-    $sectionUrl = 'https://en.wikipedia.org/w/api.php?' . http_build_query([
+    $sectionUrl = "https://$domain/w/api.php?" . http_build_query([
         'action'             => 'parse',
         'format'             => 'json',
         'formatversion'      => '2',
@@ -215,8 +307,8 @@ function wikiDescriptionSection(string $title, $ctx): string
 /**
  * Build a compact field-guide reading of the lead without rewriting it.
  *
- * The first paragraph is one or two complete sentences and answers “what is
- * this bird?” The second advances through the lead until it has enough useful
+ * The first paragraph is one or two complete sentences and answers "what is
+ * this bird?" The second advances through the lead until it has enough useful
  * range, appearance, habitat, or behavior context. The ceilings are soft: a
  * long source sentence is kept whole rather than cut off.
  *
@@ -410,6 +502,10 @@ function fitFieldGuideCard(array $paragraphs, array $distinctive): array
  * is recognised. If the article offers no such sentence, the card simply
  * omits the note rather than inventing field-guide copy.
  *
+ * English-only vocabulary: only meaningful for an English-language lead (see
+ * the call site below). Run against a Portuguese lead it will simply find no
+ * matches and return an empty list, which is the desired degradation.
+ *
  * @return list<string>
  */
 function distinctiveFieldMarks(string $source): array
@@ -515,48 +611,32 @@ $ua = getenv('AV_USER_AGENT') ?: 'AvianVisitors/1.0 (+https://github.com/Twarner
 $ctx = stream_context_create([
     'http' => ['header' => "User-Agent: $ua\r\n", 'timeout' => 8],
 ]);
-$url = 'https://en.wikipedia.org/w/api.php?' . http_build_query([
-    'action'        => 'query',
-    'format'        => 'json',
-    'formatversion' => '2',
-    'redirects'     => '1',
-    'prop'          => 'extracts|pageimages',
-    'exintro'       => '1',
-    'explaintext'   => '1',
-    'piprop'        => 'thumbnail',
-    'pithumbsize'   => '640',
-    'titles'        => $sci,
-], '', '&', PHP_QUERY_RFC3986);
-$raw = @file_get_contents($url, false, $ctx);
-if ($raw === false) {
-    echo json_encode(['extract' => null, 'thumbnail' => null]);
-    exit;
+
+// Try the preferred language edition first (based on DATABASE_LANG); fall
+// back to English whenever the species has no article, or no usable extract,
+// in that edition. The field-guide sentence heuristics further down only
+// run against an English lead, so $usedLang also gates those calls.
+$preferredLang = preferredWikiLang();
+$usedLang = $preferredLang;
+$found = null;
+if ($preferredLang !== 'en') {
+    $found = fetchWikiLead(wikiDomain($preferredLang), $sci, $ctx);
 }
-$j = json_decode($raw, true);
-if (!is_array($j)) {
-    echo json_encode(['extract' => null, 'thumbnail' => null]);
-    exit;
+if ($found === null) {
+    $usedLang = 'en';
+    $found = fetchWikiLead(wikiDomain('en'), $sci, $ctx);
 }
 
-$page = $j['query']['pages'][0] ?? null;
-if (!is_array($page)) {
+if ($found === null) {
     echo json_encode(['extract' => null, 'thumbnail' => null]);
     exit;
 }
 
-$thumb = $page['thumbnail']['source'] ?? null;
-if ($thumb) {
-    $host = parse_url((string)$thumb, PHP_URL_HOST) ?: '';
-    if (!preg_match('/(?:^|\.)(?:wikimedia\.org|wikipedia\.org)$/i', $host)) {
-        $thumb = null;
-    }
-}
-
-$extract = isset($page['extract']) && is_string($page['extract'])
-    ? cleanWikiLead($page['extract'])
-    : null;
-$pageTitle = isset($page['title']) && is_string($page['title']) ? $page['title'] : null;
-$aboutSource = $extract ?? '';
+$usedDomain = wikiDomain($usedLang);
+$thumb = $found['thumbnail'];
+$extract = cleanWikiLead($found['extract']);
+$pageTitle = $found['title'];
+$aboutSource = $extract;
 $initialParagraphs = $aboutSource ? fieldGuideParagraphs($aboutSource) : [];
 $initialLength = textLength(implode(' ', $initialParagraphs));
 
@@ -564,7 +644,7 @@ $initialLength = textLength(implode(' ', $initialParagraphs));
 // lead. Pull the beginning of the article in those cases so the second About
 // paragraph can carry actual field marks or behavior rather than filler.
 if ($pageTitle && $extract && $initialLength < 360) {
-    $expandedUrl = 'https://en.wikipedia.org/w/api.php?' . http_build_query([
+    $expandedUrl = "https://$usedDomain/w/api.php?" . http_build_query([
         'action'          => 'query',
         'format'          => 'json',
         'formatversion'   => '2',
@@ -589,10 +669,12 @@ if ($pageTitle && $extract && $initialLength < 360) {
 }
 
 // Some substantial leads cover range and taxonomy but omit appearance (House
-// Finch is one). Only then, read the article's named field-description section.
+// Finch is one). Only then, read the article's named field-description
+// section -- and only for an English lead, since the headings we look for
+// ("Description", "Identification", "Appearance") are English-only.
 $initialDistinctive = $aboutSource ? distinctiveFieldMarks($aboutSource) : [];
-if (!$initialDistinctive && $pageTitle) {
-    $descriptionSection = wikiDescriptionSection($pageTitle, $ctx);
+if (!$initialDistinctive && $pageTitle && $usedLang === 'en') {
+    $descriptionSection = wikiDescriptionSection($usedDomain, $pageTitle, $ctx);
     if ($descriptionSection !== '') {
         $aboutSource .= "\n" . $descriptionSection;
     }
@@ -613,7 +695,7 @@ $paragraphs = $fitted['paragraphs'];
 $distinctiveSentences = $fitted['distinctive'];
 $distinctive = $distinctiveSentences ? implode(' ', $distinctiveSentences) : null;
 $sourceUrl = $pageTitle
-    ? 'https://en.wikipedia.org/wiki/' . str_replace('%2F', '/', rawurlencode(str_replace(' ', '_', $pageTitle)))
+    ? "https://$usedDomain/wiki/" . str_replace('%2F', '/', rawurlencode(str_replace(' ', '_', $pageTitle)))
     : null;
 
 echo json_encode([
@@ -624,8 +706,9 @@ echo json_encode([
     'distinctive' => $distinctive,
     'thumbnail' => $thumb ? ['source' => $thumb] : null,
     'title'     => $pageTitle,
+    'lang'      => $usedLang,
     'source'    => $sourceUrl ? [
-        'name' => 'Wikipedia',
+        'name' => $usedLang === 'pt' ? 'Wikipedia (PT)' : 'Wikipedia',
         'url' => $sourceUrl,
         'license' => 'CC BY-SA 4.0',
     ] : null,
