@@ -487,10 +487,12 @@
     var q = '?v=' + TABLE_VERSION + (bust ? '&t=' + Date.now() : '');
     return Promise.all([
       fetch('./dims.json' + q).then(function (r) { return r.json(); }),
-      fetch('./masks.json' + q).then(function (r) { return r.json(); })
+      fetch('./masks.json' + q).then(function (r) { return r.json(); }),
+      fetch('./ebird-codes.json' + q).then(function (r) { return r.json(); }).catch(function () { return {}; })
     ]).then(function (loaded) {
       DIMS = loaded[0];
       MASKS = loaded[1];
+      EBIRD_CODES = loaded[2] || {};
       maskCache = {};
       tablesReady = true;
       // renderCollage defers its first pack until the silhouettes exist (see
@@ -3573,31 +3575,11 @@
   // https://ebird.org/species/<code>/, where <code> is a stable 6-char
   // taxonomy code. Keep this in step with scripts/ebird.php so every
   // postcard opens its bird, never the generic Explore page.
-  var EBIRD_CODES = {
-    'Agelaius phoeniceus': 'rewbla',
-    'Aix sponsa': 'wooduc',
-    'Anas platyrhynchos': 'mallar3',
-    'Aphelocoma californica': 'cowscj1',
-    'Aphelocoma woodhouseii': 'wooscj2',
-    'Archilochus alexandri': 'bkchum',
-    'Ardea herodias': 'grbher3',
-    'Baeolophus inornatus': 'oaktit',
-    'Bombycilla cedrorum': 'cedwax',
-    'Branta canadensis': 'cangoo',
-    'Bubo virginianus': 'grhowl',
-    'Buteo jamaicensis': 'rethaw',
-    'Calypte anna': 'annhum',
-    'Corvus brachyrhynchos': 'amecro',
-    'Haemorhous mexicanus': 'houfin',
-    'Larus occidentalis': 'wesgul',
-    'Mimus polyglottos': 'normoc',
-    'Passer domesticus': 'houspa',
-    'Sayornis nigricans': 'blkpho',
-    'Spinus psaltria': 'lesgol',
-    'Turdus migratorius': 'amerob',
-    'Zenaida macroura': 'moudov',
-    'Zonotrichia leucophrys': 'whcspa'
-  };
+  // Populated asynchronously from ebird-codes.json (built by
+  // avian/scripts/build_ebird_codes.py against the eBird taxonomy API,
+  // covering the full BirdNET species list rather than a handful of
+  // North American backyard birds).
+  var EBIRD_CODES = {};
 
   function wikiUrl(sci) {
     return 'https://pt.wikipedia.org/wiki/' + encodeURIComponent(sci.replace(/ /g, '_'));
@@ -3605,6 +3587,14 @@
   function ebirdUrl(sci) {
     var code = EBIRD_CODES[sci];
     return code ? 'https://ebird.org/species/' + code : '';
+  }
+  function wikiavesUrl(com) {
+    if (!com) return '';
+    var slug = com.toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return slug ? 'https://www.wikiaves.com.br/wiki/' + slug : '';
   }
 
   // Tiny inline icons - monochrome, ink-only, match the page palette.
@@ -4732,6 +4722,7 @@
         var imageSrc = needsArt ? './nest-eggs.webp' : sketchSrc + fresh;
         var birdWiki = wikiUrl(s.sci);
         var birdEbird = ebirdUrl(s.sci);
+        var birdWikiAves = wikiavesUrl(s.com);
         return ''
           + '<article class="bird-card classic-atlas-card' + (needsArt ? ' needs-art' : '') + '"'
           + ' data-sci="' + escHtml(s.sci) + '" data-com="' + escHtml(s.com || '') + '" data-audio="' + escHtml(audioSrc) + '"'
@@ -4751,6 +4742,7 @@
           + '</button>'
           + '<a class="chip ext" href="' + escHtml(birdWiki) + '" target="_blank" rel="noopener" aria-label="Wikipedia">wiki</a>'
           + (birdEbird ? '<a class="chip ext" href="' + escHtml(birdEbird) + '" target="_blank" rel="noopener" aria-label="eBird">ebird</a>' : '')
+          + (birdWikiAves ? '<a class="chip ext" href="' + escHtml(birdWikiAves) + '" target="_blank" rel="noopener" aria-label="WikiAves">wikiaves</a>' : '')
           + '</div>'
           + '</article>';
       }
@@ -8045,6 +8037,11 @@
     ebirdLink.hidden = !ebirdHref;
     if (ebirdHref) ebirdLink.href = ebirdHref;
     else ebirdLink.removeAttribute('href');
+    var wikiavesLink = document.getElementById('modalWikiAves');
+    var wikiavesHref = wikiavesUrl((lifelistBird && lifelistBird.com) || '');
+    wikiavesLink.hidden = !wikiavesHref;
+    if (wikiavesHref) wikiavesLink.href = wikiavesHref;
+    else wikiavesLink.removeAttribute('href');
 
     resetPostcardPanels();
 
