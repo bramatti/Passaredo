@@ -84,3 +84,6 @@ avian/assets/illustrations/.generate.state.json
 
 # symlink criado pelo instalador, nao faz parte do codigo-fonte
 model/labels_flickr.txt
+
+# Backups do banco de dados -- contem dados pessoais de deteccoes, nao versionar
+scripts/birds.db.bak-*
