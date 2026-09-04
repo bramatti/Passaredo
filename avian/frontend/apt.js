@@ -2,7 +2,7 @@
   var PLACEHOLDER = [{ "sci": "Calypte anna", "com": "Anna's Hummingbird", "featured": true }, { "sci": "Passer domesticus", "com": "House Sparrow" }, { "sci": "Haemorhous mexicanus", "com": "House Finch" }, { "sci": "Turdus migratorius", "com": "American Robin" }, { "sci": "Zenaida macroura", "com": "Mourning Dove" }, { "sci": "Spinus psaltria", "com": "Lesser Goldfinch" }, { "sci": "Zonotrichia leucophrys", "com": "White-crowned Sparrow" }, { "sci": "Aphelocoma californica", "com": "California Scrub-Jay" }, { "sci": "Mimus polyglottos", "com": "Northern Mockingbird" }, { "sci": "Sayornis nigricans", "com": "Black Phoebe" }, { "sci": "Larus occidentalis", "com": "Western Gull" }, { "sci": "Corvus brachyrhynchos", "com": "American Crow" }];
   // Library-wide revision for a full offline sketch rebuild. One-species
   // corrections use ART_REVISIONS below.
-  var SKETCH_VERSION = 'r903'; // r12: 84 eastern NA birds (PR #23) refined + re-cut. r11: full library restyle: every species
+  var SKETCH_VERSION = 'r904'; // r12: 84 eastern NA birds (PR #23) refined + re-cut. r11: full library restyle: every species
   // re-rendered (perched + flight) with clean cutouts.
   // Cache-bust for /avian/api/cutout.php. Bump only when every CF DC must
   // drop the full image library.
@@ -10,11 +10,11 @@
   // equivalent to a global cache purge for /avian/api/cutout.php.
   // caches.default.delete() in the worker only affects one colo at a time,
   // so a versioned URL is the only reliable way to invalidate everywhere.
-  var IMG_VERSION = 'r903'; // r12: 84 eastern NA birds (PR #23) refined + re-cut. r11: full library restyle: every species re-rendered
+  var IMG_VERSION = 'r904'; // r12: 84 eastern NA birds (PR #23) refined + re-cut. r11: full library restyle: every species re-rendered
   // with clean cutouts, so drop every cached copy.
   // Keep table and one-off art revisions separate from the library-wide
   // versions above. A corrected species should not evict every bird image.
-  var TABLE_VERSION = 'r903';
+  var TABLE_VERSION = 'r904';
   var ART_REVISIONS = {
     'aphelocoma-woodhouseii': 'anatomy-1'
   };
@@ -82,7 +82,7 @@
   // Each view's title text. The shared static-head shows one of these
   // based on the current view; identical adjacent values mean the title
   // stays put with no fade (collage and stats both say Heard Recently).
-  var VIEW_TITLES = ['Cantos dos Ganchos', 'Cantos dos Ganchos', 'Avian Atlas'];
+  var VIEW_TITLES = ['Cantos dos Ganchos', 'Cantos dos Ganchos', 'Todos os registros'];
   var EMPTY_WINDOW_COPY = 'no detections heard in this window';
   var staticHead = document.querySelector('.static-head');
   var staticTitle = document.getElementById('staticTitle');
@@ -4475,22 +4475,22 @@
     btn.setAttribute('data-state', state);
     if (state === 'playing') {
       btn.setAttribute('data-active', 'true');
-      btn.innerHTML = ICON_PAUSE + '<span>stop</span>';
+      btn.innerHTML = ICON_PAUSE;
     } else if (state === 'loading') {
       btn.setAttribute('data-active', 'true');
-      btn.innerHTML = ICON_PLAY + '<span>...</span>';
+      btn.innerHTML = ICON_PLAY;
     } else if (state === 'missing') {
       btn.setAttribute('data-active', 'false');
-      btn.innerHTML = ICON_PLAY + '<span>no audio</span>';
+      btn.innerHTML = ICON_PLAY;
       setTimeout(function () {
         if (btn.getAttribute('data-state') === 'missing') {
-          btn.innerHTML = ICON_PLAY + '<span>play</span>';
+          btn.innerHTML = ICON_PLAY;
           btn.setAttribute('data-state', 'idle');
         }
       }, 2200);
     } else {
       btn.setAttribute('data-active', 'false');
-      btn.innerHTML = ICON_PLAY + '<span>play</span>';
+      btn.innerHTML = ICON_PLAY;
     }
   }
   function clearAtlasCardProgress(card) {
@@ -4738,7 +4738,7 @@
           + '<div class="spectro-wrap" aria-hidden="true"></div>'
           + '<div class="actions">'
           + '<button type="button" class="chip play" data-action="play" aria-label="play recording">'
-          + ICON_PLAY + '<span>play</span>'
+          + ICON_PLAY
           + '</button>'
           + '<a class="chip ext" href="' + escHtml(birdWiki) + '" target="_blank" rel="noopener" aria-label="Wikipedia">wiki</a>'
           + (birdEbird ? '<a class="chip ext" href="' + escHtml(birdEbird) + '" target="_blank" rel="noopener" aria-label="eBird">ebird</a>' : '')
